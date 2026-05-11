@@ -118,8 +118,8 @@ export async function getForecast(range: DateRange): Promise<Forecast> {
 
   const { data: subs, error: subsErr } = await supabase
     .from('petloo_subscriptions')
-    .select('id, plan_id, petloo_plans(name)')
-    .eq('status', 'active')
+    .select('id, plan_id, status, petloo_plans(name)')
+    .neq('status', 'canceled')
     .gte('next_billing_at', range.from.toISOString())
     .lte('next_billing_at', range.to.toISOString())
     .limit(5000);
