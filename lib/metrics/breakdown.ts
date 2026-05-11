@@ -95,21 +95,34 @@ export type Forecast = {
   unknownValueCount: number;
 };
 
+function planPriceFromItems(items: unknown): number {
+  if (!Array.isArray(items)) return 0;
+  let total = 0;
+  for (const item of items as any[]) {
+    const qty = typeof item?.quantity === 'number' ? item.quantity : 1;
+    const price =
+      typeof item?.pricing_scheme?.price === 'number' ? item.pricing_scheme.price : 0;
+    total += qty * price;
+  }
+  return total;
+}
+
 /**
- * Previsibilidade baseada em subscriptions ativas que vão ser cobradas no período.
- * Pagar.me não pré-gera invoices durante trial, então usamos:
- *   active subscriptions where next_billing_at in [from, to]
- *   × valor da última invoice paga dessa subscription (estimativa)
+ * Previsibilidade: subs ativas com next_billing_at no período × valor estimado.
+ * Estimativa por sub (em ordem de preferência):
+ *   1. Última fatura paga daquela sub
+ *   2. Preço do plano (de petloo_plans.items.pricing_scheme.price) — usado pra subs em trial
  */
 export async function getForecast(range: DateRange): Promise<Forecast> {
   const supabase = createServiceClient();
 
   const { data: subs, error: subsErr } = await supabase
     .from('petloo_subscriptions')
-    .select('id, petloo_plans(name)')
+    .select('id, plan_id, petloo_plans(name)')
     .eq('status', 'active')
     .gte('next_billing_at', range.from.toISOString())
-    .lte('next_billing_at', range.to.toISOString());
+    .lte('next_billing_at', range.to.toISOString())
+    .limit(5000);
 
   if (subsErr) console.error('[forecast] subs:', subsErr);
 
@@ -119,21 +132,36 @@ export async function getForecast(range: DateRange): Promise<Forecast> {
   }
 
   const subIds = subList.map((s) => s.id as string);
-  const { data: invoices, error: invErr } = await supabase
-    .from('petloo_invoices')
-    .select('subscription_id, amount, paid_at')
-    .eq('status', 'paid')
-    .in('subscription_id', subIds)
-    .order('paid_at', { ascending: false, nullsFirst: false });
+  const planIds = Array.from(new Set(subList.map((s) => s.plan_id).filter(Boolean))) as string[];
 
-  if (invErr) console.error('[forecast] invoices:', invErr);
+  const [lastInvsRes, plansRes] = await Promise.all([
+    supabase
+      .from('petloo_invoices')
+      .select('subscription_id, amount, paid_at')
+      .eq('status', 'paid')
+      .in('subscription_id', subIds)
+      .order('paid_at', { ascending: false, nullsFirst: false })
+      .limit(10000),
+    planIds.length > 0
+      ? supabase.from('petloo_plans').select('id, items').in('id', planIds)
+      : Promise.resolve({ data: [], error: null } as any),
+  ]);
 
-  const lastAmountPerSub = new Map<string, number>();
-  for (const inv of (invoices ?? []) as any[]) {
+  if (lastInvsRes.error) console.error('[forecast] last invoices:', lastInvsRes.error);
+  if (plansRes.error) console.error('[forecast] plans:', plansRes.error);
+
+  const lastAmount = new Map<string, number>();
+  for (const inv of (lastInvsRes.data ?? []) as any[]) {
     if (!inv.subscription_id || inv.amount == null) continue;
-    if (!lastAmountPerSub.has(inv.subscription_id)) {
-      lastAmountPerSub.set(inv.subscription_id, inv.amount);
+    if (!lastAmount.has(inv.subscription_id)) {
+      lastAmount.set(inv.subscription_id, inv.amount);
     }
+  }
+
+  const planPrice = new Map<string, number>();
+  for (const p of (plansRes.data ?? []) as any[]) {
+    const price = planPriceFromItems(p.items);
+    if (price > 0) planPrice.set(p.id, price);
   }
 
   const planMap = new Map<string, ForecastRow>();
@@ -150,13 +178,17 @@ export async function getForecast(range: DateRange): Promise<Forecast> {
     }
     row.subscription_count++;
     totalCount++;
-    const amount = lastAmountPerSub.get(sub.id);
-    if (amount == null) {
-      row.unknown_value_count++;
-      unknownValueCount++;
-    } else {
+
+    let amount = lastAmount.get(sub.id);
+    if (amount == null && sub.plan_id) {
+      amount = planPrice.get(sub.plan_id);
+    }
+    if (amount != null && amount > 0) {
       row.estimated_amount += amount;
       totalAmount += amount;
+    } else {
+      row.unknown_value_count++;
+      unknownValueCount++;
     }
   }
 

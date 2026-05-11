@@ -70,19 +70,17 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
       .gte('paid_at', prevSinceISO)
       .lte('paid_at', prevUntilISO),
     supabase
-      .from('petloo_charges')
+      .from('petloo_invoices')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'paid')
-      .not('invoice_pagarme_id', 'is', null)
-      .gte('paid_at', sinceISO)
-      .lte('paid_at', untilISO),
+      .gte('pagarme_created_at', sinceISO)
+      .lte('pagarme_created_at', untilISO),
     supabase
-      .from('petloo_charges')
+      .from('petloo_invoices')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'failed')
-      .not('invoice_pagarme_id', 'is', null)
-      .gte('created_at', sinceISO)
-      .lte('created_at', untilISO),
+      .gte('pagarme_created_at', sinceISO)
+      .lte('pagarme_created_at', untilISO),
     supabase
       .from('petloo_subscriptions')
       .select('id', { count: 'exact', head: true })

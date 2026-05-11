@@ -117,9 +117,9 @@ export default async function OverviewPage({
               Previsibilidade — a receber no período
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Assinaturas ativas com <code className="rounded bg-muted px-1">next_billing_at</code> no
-              período × valor da última fatura paga (estimativa). Pagar.me não gera invoices durante
-              trial, então usamos a próxima cobrança das subs.
+              Subs ativas com <code className="rounded bg-muted px-1">next_billing_at</code> no
+              período × valor estimado. Subs em trial (1ª cobrança) usam o preço do plano. Cobranças
+              passadas no período estão em "Receita e faturas por plano" abaixo.
             </p>
           </CardHeader>
           <CardContent>
@@ -144,7 +144,7 @@ export default async function OverviewPage({
                           {r.plan}
                           {r.unknown_value_count > 0 && (
                             <span className="ml-1 text-xs text-muted-foreground">
-                              ({r.unknown_value_count} sem histórico)
+                              ({r.unknown_value_count} sem preço)
                             </span>
                           )}
                         </td>
@@ -159,7 +159,7 @@ export default async function OverviewPage({
                         Total
                         {forecast.unknownValueCount > 0 && (
                           <span className="ml-1 text-xs font-normal text-muted-foreground">
-                            ({forecast.unknownValueCount} em trial)
+                            ({forecast.unknownValueCount} sem preço)
                           </span>
                         )}
                       </td>
