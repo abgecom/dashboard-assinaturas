@@ -59,28 +59,28 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
       .from('petloo_charges')
       .select('paid_amount')
       .eq('status', 'paid')
-      .not('subscription_pagarme_id', 'is', null)
+      .not('invoice_pagarme_id', 'is', null)
       .gte('paid_at', sinceISO)
       .lte('paid_at', untilISO),
     supabase
       .from('petloo_charges')
       .select('paid_amount')
       .eq('status', 'paid')
-      .not('subscription_pagarme_id', 'is', null)
+      .not('invoice_pagarme_id', 'is', null)
       .gte('paid_at', prevSinceISO)
       .lte('paid_at', prevUntilISO),
     supabase
       .from('petloo_charges')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'paid')
-      .not('subscription_pagarme_id', 'is', null)
+      .not('invoice_pagarme_id', 'is', null)
       .gte('paid_at', sinceISO)
       .lte('paid_at', untilISO),
     supabase
       .from('petloo_charges')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'failed')
-      .not('subscription_pagarme_id', 'is', null)
+      .not('invoice_pagarme_id', 'is', null)
       .gte('created_at', sinceISO)
       .lte('created_at', untilISO),
     supabase
@@ -144,7 +144,7 @@ export async function getMonthlyRevenue(months = 12): Promise<MonthlyRevenuePoin
     .from('petloo_charges')
     .select('paid_amount, paid_at')
     .eq('status', 'paid')
-    .not('subscription_pagarme_id', 'is', null)
+    .not('invoice_pagarme_id', 'is', null)
     .gte('paid_at', start.toISOString());
 
   logError('monthlyRevenue', error);

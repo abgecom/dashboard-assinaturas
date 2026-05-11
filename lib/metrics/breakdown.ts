@@ -22,8 +22,8 @@ export async function getPlanBreakdown(range: DateRange): Promise<PlanBreakdownR
     supabase
       .from('petloo_invoices')
       .select('amount, status, petloo_subscriptions(petloo_plans(name))')
-      .gte('billing_at', sinceISO)
-      .lte('billing_at', untilISO),
+      .gte('pagarme_created_at', sinceISO)
+      .lte('pagarme_created_at', untilISO),
     supabase
       .from('petloo_subscriptions')
       .select('petloo_plans(name)')
@@ -83,49 +83,87 @@ export async function getPlanBreakdown(range: DateRange): Promise<PlanBreakdownR
 
 export type ForecastRow = {
   plan: string;
-  invoice_count: number;
-  total_amount: number;
+  subscription_count: number;
+  estimated_amount: number;
+  unknown_value_count: number;
 };
 
 export type Forecast = {
   rows: ForecastRow[];
   totalAmount: number;
   totalCount: number;
+  unknownValueCount: number;
 };
 
+/**
+ * Previsibilidade baseada em subscriptions ativas que vão ser cobradas no período.
+ * Pagar.me não pré-gera invoices durante trial, então usamos:
+ *   active subscriptions where next_billing_at in [from, to]
+ *   × valor da última invoice paga dessa subscription (estimativa)
+ */
 export async function getForecast(range: DateRange): Promise<Forecast> {
   const supabase = createServiceClient();
 
-  const { data, error } = await supabase
+  const { data: subs, error: subsErr } = await supabase
+    .from('petloo_subscriptions')
+    .select('id, petloo_plans(name)')
+    .eq('status', 'active')
+    .gte('next_billing_at', range.from.toISOString())
+    .lte('next_billing_at', range.to.toISOString());
+
+  if (subsErr) console.error('[forecast] subs:', subsErr);
+
+  const subList = (subs ?? []) as any[];
+  if (subList.length === 0) {
+    return { rows: [], totalAmount: 0, totalCount: 0, unknownValueCount: 0 };
+  }
+
+  const subIds = subList.map((s) => s.id as string);
+  const { data: invoices, error: invErr } = await supabase
     .from('petloo_invoices')
-    .select('amount, status, petloo_subscriptions(petloo_plans(name))')
-    .eq('status', 'pending')
-    .gte('billing_at', range.from.toISOString())
-    .lte('billing_at', range.to.toISOString());
+    .select('subscription_id, amount, paid_at')
+    .eq('status', 'paid')
+    .in('subscription_id', subIds)
+    .order('paid_at', { ascending: false, nullsFirst: false });
 
-  if (error) console.error('[forecast]:', error);
+  if (invErr) console.error('[forecast] invoices:', invErr);
 
-  const map = new Map<string, ForecastRow>();
+  const lastAmountPerSub = new Map<string, number>();
+  for (const inv of (invoices ?? []) as any[]) {
+    if (!inv.subscription_id || inv.amount == null) continue;
+    if (!lastAmountPerSub.has(inv.subscription_id)) {
+      lastAmountPerSub.set(inv.subscription_id, inv.amount);
+    }
+  }
+
+  const planMap = new Map<string, ForecastRow>();
   let totalAmount = 0;
   let totalCount = 0;
+  let unknownValueCount = 0;
 
-  for (const inv of (data ?? []) as any[]) {
-    const plan: string = inv.petloo_subscriptions?.petloo_plans?.name ?? 'Sem plano';
-    let row = map.get(plan);
+  for (const sub of subList) {
+    const plan: string = sub.petloo_plans?.name ?? 'Sem plano';
+    let row = planMap.get(plan);
     if (!row) {
-      row = { plan, invoice_count: 0, total_amount: 0 };
-      map.set(plan, row);
+      row = { plan, subscription_count: 0, estimated_amount: 0, unknown_value_count: 0 };
+      planMap.set(plan, row);
     }
-    row.invoice_count++;
-    const amount = inv.amount ?? 0;
-    row.total_amount += amount;
-    totalAmount += amount;
+    row.subscription_count++;
     totalCount++;
+    const amount = lastAmountPerSub.get(sub.id);
+    if (amount == null) {
+      row.unknown_value_count++;
+      unknownValueCount++;
+    } else {
+      row.estimated_amount += amount;
+      totalAmount += amount;
+    }
   }
 
   return {
-    rows: Array.from(map.values()).sort((a, b) => b.total_amount - a.total_amount),
+    rows: Array.from(planMap.values()).sort((a, b) => b.estimated_amount - a.estimated_amount),
     totalAmount,
     totalCount,
+    unknownValueCount,
   };
 }

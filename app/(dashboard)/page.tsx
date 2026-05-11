@@ -104,7 +104,7 @@ export default async function OverviewPage({
         <KpiCard
           title="A receber no período"
           value={formatBRL(forecast.totalAmount)}
-          hint={`${forecast.totalCount.toLocaleString('pt-BR')} faturas pendentes`}
+          hint={`${forecast.totalCount.toLocaleString('pt-BR')} assinaturas previstas`}
           icon={<Sparkles className="h-4 w-4" />}
         />
       </div>
@@ -117,13 +117,15 @@ export default async function OverviewPage({
               Previsibilidade — a receber no período
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Faturas com status <code className="rounded bg-muted px-1">pending</code> e cobrança agendada dentro do período selecionado.
+              Assinaturas ativas com <code className="rounded bg-muted px-1">next_billing_at</code> no
+              período × valor da última fatura paga (estimativa). Pagar.me não gera invoices durante
+              trial, então usamos a próxima cobrança das subs.
             </p>
           </CardHeader>
           <CardContent>
             {forecast.rows.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Nenhuma fatura pendente no período. Pega um intervalo no futuro (ex: clica "Próx. 30d").
+                Nenhuma assinatura com cobrança prevista no período. Tenta "Próx. 30d".
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -131,22 +133,36 @@ export default async function OverviewPage({
                   <thead className="border-b text-left text-xs uppercase text-muted-foreground">
                     <tr>
                       <th className="py-2 pr-3">Plano</th>
-                      <th className="py-2 pr-3 text-right">Faturas</th>
-                      <th className="py-2 pr-3 text-right">A receber</th>
+                      <th className="py-2 pr-3 text-right">Assinaturas</th>
+                      <th className="py-2 pr-3 text-right">A receber (est.)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {forecast.rows.map((r) => (
                       <tr key={r.plan} className="border-b last:border-0">
-                        <td className="py-2 pr-3 font-medium">{r.plan}</td>
-                        <td className="py-2 pr-3 text-right tabular-nums">{r.invoice_count}</td>
+                        <td className="py-2 pr-3 font-medium">
+                          {r.plan}
+                          {r.unknown_value_count > 0 && (
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              ({r.unknown_value_count} sem histórico)
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{r.subscription_count}</td>
                         <td className="py-2 pr-3 text-right tabular-nums font-semibold text-amber-700">
-                          {formatBRL(r.total_amount)}
+                          {formatBRL(r.estimated_amount)}
                         </td>
                       </tr>
                     ))}
                     <tr className="bg-muted/40">
-                      <td className="py-2 pr-3 font-semibold">Total</td>
+                      <td className="py-2 pr-3 font-semibold">
+                        Total
+                        {forecast.unknownValueCount > 0 && (
+                          <span className="ml-1 text-xs font-normal text-muted-foreground">
+                            ({forecast.unknownValueCount} em trial)
+                          </span>
+                        )}
+                      </td>
                       <td className="py-2 pr-3 text-right tabular-nums font-semibold">
                         {forecast.totalCount}
                       </td>
