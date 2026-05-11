@@ -1,44 +1,10 @@
 import { createServiceClient } from '@/lib/supabase/server';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-export type OverviewRange = '7d' | '30d' | '90d' | '12m' | 'all';
-
-const RANGE_DAYS: Record<Exclude<OverviewRange, 'all'>, number> = {
-  '7d': 7,
-  '30d': 30,
-  '90d': 90,
-  '12m': 365,
-};
-
-export const RANGE_LABELS: Record<OverviewRange, string> = {
-  '7d': 'Últimos 7 dias',
-  '30d': 'Últimos 30 dias',
-  '90d': 'Últimos 90 dias',
-  '12m': 'Últimos 12 meses',
-  all: 'Todo o período',
-};
-
-function rangeBounds(range: OverviewRange): {
-  since: Date | null;
-  prevSince: Date | null;
-  prevUntil: Date | null;
-} {
-  if (range === 'all') return { since: null, prevSince: null, prevUntil: null };
-  const days = RANGE_DAYS[range];
-  const now = Date.now();
-  return {
-    since: new Date(now - days * DAY_MS),
-    prevSince: new Date(now - 2 * days * DAY_MS),
-    prevUntil: new Date(now - days * DAY_MS),
-  };
-}
+import type { DateRange } from './range';
+import { previousRange } from './range';
 
 export type OverviewMetrics = {
-  range: OverviewRange;
-  rangeLabel: string;
   activeSubscriptions: number;
-  canceledSubscriptions: number;
+  canceledSubscriptionsTotal: number;
   totalCustomers: number;
   newCustomersInRange: number;
   revenueInRange: number;
@@ -50,6 +16,7 @@ export type OverviewMetrics = {
   churnRateInRange: number | null;
   avgTicketInRange: number;
   arpu: number;
+  canceledInRange: number;
 };
 
 function sumPaid(rows: Array<{ paid_amount: number | null }> | null): number {
@@ -60,119 +27,84 @@ function logError(label: string, error: unknown) {
   if (error) console.error(`[overview] ${label}:`, error);
 }
 
-export async function getOverviewMetrics(range: OverviewRange = '30d'): Promise<OverviewMetrics> {
+export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetrics> {
   const supabase = createServiceClient();
-  const { since, prevSince, prevUntil } = rangeBounds(range);
-  const sinceISO = since?.toISOString() ?? null;
-  const prevSinceISO = prevSince?.toISOString() ?? null;
-  const prevUntilISO = prevUntil?.toISOString() ?? null;
-
-  // Subscription-only charges: subscription_pagarme_id IS NOT NULL
-  function paidChargesQuery() {
-    let q = supabase
-      .from('petloo_charges')
-      .select('paid_amount')
-      .eq('status', 'paid')
-      .not('subscription_pagarme_id', 'is', null);
-    if (sinceISO) q = q.gte('paid_at', sinceISO);
-    return q;
-  }
-
-  function prevPaidChargesQuery() {
-    if (!prevSinceISO || !prevUntilISO) {
-      return supabase.from('petloo_charges').select('paid_amount').eq('id', '__none__');
-    }
-    return supabase
-      .from('petloo_charges')
-      .select('paid_amount')
-      .eq('status', 'paid')
-      .not('subscription_pagarme_id', 'is', null)
-      .gte('paid_at', prevSinceISO)
-      .lt('paid_at', prevUntilISO);
-  }
-
-  function paidCountQuery() {
-    let q = supabase
-      .from('petloo_charges')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'paid')
-      .not('subscription_pagarme_id', 'is', null);
-    if (sinceISO) q = q.gte('paid_at', sinceISO);
-    return q;
-  }
-
-  function failedCountQuery() {
-    let q = supabase
-      .from('petloo_charges')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'failed')
-      .not('subscription_pagarme_id', 'is', null);
-    if (sinceISO) q = q.gte('created_at', sinceISO);
-    return q;
-  }
-
-  function newCustomersQuery() {
-    let q = supabase.from('petloo_customers').select('id', { count: 'exact', head: true });
-    if (sinceISO) q = q.gte('pagarme_created_at', sinceISO);
-    return q;
-  }
-
-  function canceledInRangeQuery() {
-    let q = supabase
-      .from('petloo_subscriptions')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'canceled');
-    if (sinceISO) q = q.gte('canceled_at', sinceISO);
-    return q;
-  }
-
-  function activeAtStartQuery() {
-    if (!sinceISO) {
-      return supabase
-        .from('petloo_subscriptions')
-        .select('id', { count: 'exact', head: true })
-        .or('canceled_at.is.null,canceled_at.gt.' + new Date().toISOString());
-    }
-    return supabase
-      .from('petloo_subscriptions')
-      .select('id', { count: 'exact', head: true })
-      .lte('pagarme_created_at', sinceISO)
-      .or(`canceled_at.is.null,canceled_at.gt.${sinceISO}`);
-  }
+  const sinceISO = range.from.toISOString();
+  const untilISO = range.to.toISOString();
+  const prev = previousRange(range);
+  const prevSinceISO = prev.from.toISOString();
+  const prevUntilISO = prev.to.toISOString();
 
   const [
     activeSubs,
-    canceledSubs,
+    canceledSubsTotal,
     customersTotal,
     newCustomers,
     revenueRows,
     revenuePrevRows,
     paidCount,
     failedCount,
-    canceledInRange,
+    canceledInRangeRes,
     activeAtStart,
   ] = await Promise.all([
     supabase.from('petloo_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('petloo_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'canceled'),
     supabase.from('petloo_customers').select('id', { count: 'exact', head: true }),
-    newCustomersQuery(),
-    paidChargesQuery(),
-    prevPaidChargesQuery(),
-    paidCountQuery(),
-    failedCountQuery(),
-    canceledInRangeQuery(),
-    activeAtStartQuery(),
+    supabase
+      .from('petloo_customers')
+      .select('id', { count: 'exact', head: true })
+      .gte('pagarme_created_at', sinceISO)
+      .lte('pagarme_created_at', untilISO),
+    supabase
+      .from('petloo_charges')
+      .select('paid_amount')
+      .eq('status', 'paid')
+      .not('subscription_pagarme_id', 'is', null)
+      .gte('paid_at', sinceISO)
+      .lte('paid_at', untilISO),
+    supabase
+      .from('petloo_charges')
+      .select('paid_amount')
+      .eq('status', 'paid')
+      .not('subscription_pagarme_id', 'is', null)
+      .gte('paid_at', prevSinceISO)
+      .lte('paid_at', prevUntilISO),
+    supabase
+      .from('petloo_charges')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'paid')
+      .not('subscription_pagarme_id', 'is', null)
+      .gte('paid_at', sinceISO)
+      .lte('paid_at', untilISO),
+    supabase
+      .from('petloo_charges')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'failed')
+      .not('subscription_pagarme_id', 'is', null)
+      .gte('created_at', sinceISO)
+      .lte('created_at', untilISO),
+    supabase
+      .from('petloo_subscriptions')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'canceled')
+      .gte('canceled_at', sinceISO)
+      .lte('canceled_at', untilISO),
+    supabase
+      .from('petloo_subscriptions')
+      .select('id', { count: 'exact', head: true })
+      .lte('pagarme_created_at', sinceISO)
+      .or(`canceled_at.is.null,canceled_at.gt.${sinceISO}`),
   ]);
 
   logError('activeSubs', activeSubs.error);
-  logError('canceledSubs', canceledSubs.error);
+  logError('canceledSubsTotal', canceledSubsTotal.error);
   logError('customersTotal', customersTotal.error);
   logError('newCustomers', newCustomers.error);
   logError('revenueRows', revenueRows.error);
   logError('revenuePrevRows', revenuePrevRows.error);
   logError('paidCount', paidCount.error);
   logError('failedCount', failedCount.error);
-  logError('canceledInRange', canceledInRange.error);
+  logError('canceledInRange', canceledInRangeRes.error);
   logError('activeAtStart', activeAtStart.error);
 
   const revenue = sumPaid(revenueRows.data as Array<{ paid_amount: number | null }> | null);
@@ -180,25 +112,24 @@ export async function getOverviewMetrics(range: OverviewRange = '30d'): Promise<
   const activeCount = activeSubs.count ?? 0;
   const paid = paidCount.count ?? 0;
   const failed = failedCount.count ?? 0;
-  const canceled30 = canceledInRange.count ?? 0;
+  const canceledRng = canceledInRangeRes.count ?? 0;
   const activeStartCount = activeAtStart.count ?? 0;
 
   return {
-    range,
-    rangeLabel: RANGE_LABELS[range],
     activeSubscriptions: activeCount,
-    canceledSubscriptions: canceledSubs.count ?? 0,
+    canceledSubscriptionsTotal: canceledSubsTotal.count ?? 0,
     totalCustomers: customersTotal.count ?? 0,
     newCustomersInRange: newCustomers.count ?? 0,
     revenueInRange: revenue,
     revenuePrevRange: revenuePrev,
-    revenueDelta: range === 'all' || revenuePrev <= 0 ? null : (revenue - revenuePrev) / revenuePrev,
+    revenueDelta: revenuePrev > 0 ? (revenue - revenuePrev) / revenuePrev : null,
     paidChargesInRange: paid,
     failedChargesInRange: failed,
     paymentSuccessRate: paid + failed > 0 ? paid / (paid + failed) : null,
-    churnRateInRange: activeStartCount > 0 ? canceled30 / activeStartCount : null,
+    churnRateInRange: activeStartCount > 0 ? canceledRng / activeStartCount : null,
     avgTicketInRange: paid > 0 ? revenue / paid : 0,
     arpu: activeCount > 0 ? revenue / activeCount : 0,
+    canceledInRange: canceledRng,
   };
 }
 
@@ -255,9 +186,4 @@ export async function getTopCustomersByLTV(limit = 10): Promise<TopCustomer[]> {
     .limit(limit);
   logError('topCustomers', error);
   return (data ?? []) as TopCustomer[];
-}
-
-export function parseRange(input: string | undefined): OverviewRange {
-  const valid: OverviewRange[] = ['7d', '30d', '90d', '12m', 'all'];
-  return (valid as string[]).includes(input ?? '') ? (input as OverviewRange) : '30d';
 }

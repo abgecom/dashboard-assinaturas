@@ -1,16 +1,25 @@
 import Link from 'next/link';
-import { Users, Repeat, DollarSign, TrendingDown, CheckCircle2, Receipt } from 'lucide-react';
+import {
+  Users,
+  Repeat,
+  DollarSign,
+  TrendingDown,
+  CheckCircle2,
+  Receipt,
+  Sparkles,
+  XCircle,
+} from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/kpi-card';
-import { RangeSelector } from '@/components/range-selector';
+import { DateRangePicker } from '@/components/date-range-picker';
 import { RevenueChart } from '@/components/charts/revenue-chart';
 import {
-  RANGE_LABELS,
   getMonthlyRevenue,
   getOverviewMetrics,
   getTopCustomersByLTV,
-  parseRange,
 } from '@/lib/metrics/overview';
+import { getPlanBreakdown, getForecast } from '@/lib/metrics/breakdown';
+import { formatRangeLabel, parseRangeFromParams, toISODate } from '@/lib/metrics/range';
 import { formatBRL, formatDate } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
@@ -23,15 +32,19 @@ function formatPercent(value: number | null | undefined, digits = 1): string {
 export default async function OverviewPage({
   searchParams,
 }: {
-  searchParams?: { range?: string };
+  searchParams?: { from?: string; to?: string };
 }) {
-  const range = parseRange(searchParams?.range);
-  const rangeLabel = RANGE_LABELS[range].toLowerCase();
+  const range = parseRangeFromParams(searchParams ?? {});
+  const fromStr = searchParams?.from ?? toISODate(range.from);
+  const toStr = searchParams?.to ?? toISODate(range.to);
+  const rangeLabel = formatRangeLabel(range);
 
-  const [metrics, monthly, topCustomers] = await Promise.all([
+  const [metrics, monthly, topCustomers, breakdown, forecast] = await Promise.all([
     getOverviewMetrics(range),
     getMonthlyRevenue(12),
     getTopCustomersByLTV(10),
+    getPlanBreakdown(range),
+    getForecast(range),
   ]);
 
   return (
@@ -39,31 +52,29 @@ export default async function OverviewPage({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
-          <p className="text-sm text-muted-foreground">
-            Visão geral das assinaturas, receita recorrente e saúde da base ({rangeLabel}).
-          </p>
+          <p className="text-sm text-muted-foreground">{rangeLabel}</p>
         </div>
-        <RangeSelector current={range} />
+        <DateRangePicker from={fromStr} to={toStr} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard
-          title={`Receita de assinaturas (${rangeLabel})`}
+          title="Receita de assinaturas"
           value={formatBRL(metrics.revenueInRange)}
           delta={metrics.revenueDelta}
-          hint={range === 'all' ? 'todo o período' : 'vs. período anterior'}
+          hint="vs. período anterior"
           icon={<DollarSign className="h-4 w-4" />}
         />
         <KpiCard
           title="Assinaturas ativas"
           value={metrics.activeSubscriptions.toLocaleString('pt-BR')}
-          hint={`${metrics.canceledSubscriptions.toLocaleString('pt-BR')} canceladas no total`}
+          hint={`${metrics.canceledSubscriptionsTotal.toLocaleString('pt-BR')} canceladas no total`}
           icon={<Repeat className="h-4 w-4" />}
         />
         <KpiCard
-          title={`Churn (${rangeLabel})`}
+          title="Churn no período"
           value={formatPercent(metrics.churnRateInRange)}
-          hint="canceladas / ativas no início"
+          hint={`${metrics.canceledInRange.toLocaleString('pt-BR')} cancelaram`}
           icon={<TrendingDown className="h-4 w-4" />}
         />
         <KpiCard
@@ -79,7 +90,7 @@ export default async function OverviewPage({
           icon={<Users className="h-4 w-4" />}
         />
         <KpiCard
-          title={`ARPU (${rangeLabel})`}
+          title="ARPU"
           value={formatBRL(metrics.arpu)}
           hint="receita / assinaturas ativas"
           icon={<DollarSign className="h-4 w-4" />}
@@ -87,16 +98,154 @@ export default async function OverviewPage({
         <KpiCard
           title="Ticket médio"
           value={formatBRL(metrics.avgTicketInRange)}
-          hint="por cobrança paga no período"
+          hint="por cobrança paga"
           icon={<Receipt className="h-4 w-4" />}
         />
         <KpiCard
-          title={`Cobranças pagas (${rangeLabel})`}
-          value={metrics.paidChargesInRange.toLocaleString('pt-BR')}
-          hint={`${metrics.failedChargesInRange.toLocaleString('pt-BR')} falharam`}
-          icon={<CheckCircle2 className="h-4 w-4" />}
+          title="A receber no período"
+          value={formatBRL(forecast.totalAmount)}
+          hint={`${forecast.totalCount.toLocaleString('pt-BR')} faturas pendentes`}
+          icon={<Sparkles className="h-4 w-4" />}
         />
       </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <Sparkles className="h-4 w-4 text-amber-600" />
+              Previsibilidade — a receber no período
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Faturas com status <code className="rounded bg-muted px-1">pending</code> e cobrança agendada dentro do período selecionado.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {forecast.rows.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Nenhuma fatura pendente no período. Pega um intervalo no futuro (ex: clica "Próx. 30d").
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="border-b text-left text-xs uppercase text-muted-foreground">
+                    <tr>
+                      <th className="py-2 pr-3">Plano</th>
+                      <th className="py-2 pr-3 text-right">Faturas</th>
+                      <th className="py-2 pr-3 text-right">A receber</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {forecast.rows.map((r) => (
+                      <tr key={r.plan} className="border-b last:border-0">
+                        <td className="py-2 pr-3 font-medium">{r.plan}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums">{r.invoice_count}</td>
+                        <td className="py-2 pr-3 text-right tabular-nums font-semibold text-amber-700">
+                          {formatBRL(r.total_amount)}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="bg-muted/40">
+                      <td className="py-2 pr-3 font-semibold">Total</td>
+                      <td className="py-2 pr-3 text-right tabular-nums font-semibold">
+                        {forecast.totalCount}
+                      </td>
+                      <td className="py-2 pr-3 text-right tabular-nums font-semibold text-amber-700">
+                        {formatBRL(forecast.totalAmount)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-foreground">
+              <XCircle className="h-4 w-4 text-red-600" />
+              Cancelamentos por plano no período
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {breakdown.every((b) => b.canceled_subscriptions === 0) ? (
+              <p className="text-sm text-muted-foreground">Nenhum cancelamento no período.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="border-b text-left text-xs uppercase text-muted-foreground">
+                    <tr>
+                      <th className="py-2 pr-3">Plano</th>
+                      <th className="py-2 pr-3 text-right">Cancelados</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {breakdown
+                      .filter((b) => b.canceled_subscriptions > 0)
+                      .map((b) => (
+                        <tr key={b.plan} className="border-b last:border-0">
+                          <td className="py-2 pr-3 font-medium">{b.plan}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums text-red-700">
+                            {b.canceled_subscriptions}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base font-semibold text-foreground">
+            Receita e faturas por plano no período
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {breakdown.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Sem faturas no período.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b text-left text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="py-2 pr-3">Plano</th>
+                    <th className="py-2 pr-3 text-right">Faturas</th>
+                    <th className="py-2 pr-3 text-right">Pagas</th>
+                    <th className="py-2 pr-3 text-right">Pendentes</th>
+                    <th className="py-2 pr-3 text-right">Falhas</th>
+                    <th className="py-2 pr-3 text-right">Receita</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {breakdown.map((b) => (
+                    <tr key={b.plan} className="border-b last:border-0">
+                      <td className="py-2 pr-3 font-medium">{b.plan}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums">{b.invoice_count}</td>
+                      <td className="py-2 pr-3 text-right tabular-nums text-emerald-700">
+                        {b.paid_count} · {formatBRL(b.paid_amount)}
+                      </td>
+                      <td className="py-2 pr-3 text-right tabular-nums text-amber-700">
+                        {b.pending_count} · {formatBRL(b.pending_amount)}
+                      </td>
+                      <td className="py-2 pr-3 text-right tabular-nums text-red-700">
+                        {b.failed_count} · {formatBRL(b.failed_amount)}
+                      </td>
+                      <td className="py-2 pr-3 text-right tabular-nums font-semibold">
+                        {formatBRL(b.paid_amount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
