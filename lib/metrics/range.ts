@@ -10,20 +10,17 @@ export function toISODate(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+// Forçamos timezone BRT (UTC-3) porque o servidor da Vercel roda em UTC,
+// mas a Pagar.me grava horários em horário brasileiro. Brasil não tem
+// horário de verão desde 2019, então UTC-3 é fixo.
+const BRT_OFFSET = '-03:00';
+
 export function startOfDay(s: string): Date {
-  const [yStr, mStr, dStr] = s.split('-');
-  const y = Number(yStr ?? 1970);
-  const m = Number(mStr ?? 1);
-  const d = Number(dStr ?? 1);
-  return new Date(y, m - 1, d, 0, 0, 0, 0);
+  return new Date(`${s}T00:00:00.000${BRT_OFFSET}`);
 }
 
 export function endOfDay(s: string): Date {
-  const [yStr, mStr, dStr] = s.split('-');
-  const y = Number(yStr ?? 1970);
-  const m = Number(mStr ?? 1);
-  const d = Number(dStr ?? 1);
-  return new Date(y, m - 1, d, 23, 59, 59, 999);
+  return new Date(`${s}T23:59:59.999${BRT_OFFSET}`);
 }
 
 export function defaultRange(): DateRange {
