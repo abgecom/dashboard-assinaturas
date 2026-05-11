@@ -109,9 +109,9 @@ export default async function OverviewPage({
           icon={<Sparkles className="h-4 w-4" />}
         />
         <KpiCard
-          title="Taxa de chargeback"
+          title="Taxa de chargeback (conta)"
           value={formatPercent(metrics.chargebackRate, 2)}
-          hint={`${metrics.chargebacksInRange.toLocaleString('pt-BR')} chargebacks de pagas`}
+          hint={`${metrics.chargebacksInRange.toLocaleString('pt-BR')} chargebacks (todas as cobranças)`}
           icon={<ShieldAlert className="h-4 w-4" />}
         />
       </div>

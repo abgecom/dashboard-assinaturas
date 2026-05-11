@@ -96,18 +96,18 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
       .select('id', { count: 'exact', head: true })
       .lte('pagarme_created_at', sinceISO)
       .or(`canceled_at.is.null,canceled_at.gt.${sinceISO}`),
+    // Chargeback é métrica da conta inteira (inclui vendas avulsas de coleira).
+    // Por isso NÃO filtra invoice_pagarme_id — diferente da receita que é só assinatura.
     supabase
       .from('petloo_charges')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'chargedback')
-      .not('invoice_pagarme_id', 'is', null)
       .gte('paid_at', sinceISO)
       .lte('paid_at', untilISO),
     supabase
       .from('petloo_charges')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'paid')
-      .not('invoice_pagarme_id', 'is', null)
       .gte('paid_at', sinceISO)
       .lte('paid_at', untilISO),
   ]);
