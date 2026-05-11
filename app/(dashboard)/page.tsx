@@ -8,6 +8,7 @@ import {
   Receipt,
   Sparkles,
   XCircle,
+  ShieldAlert,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/kpi-card';
@@ -106,6 +107,12 @@ export default async function OverviewPage({
           value={formatBRL(forecast.totalAmount)}
           hint={`${forecast.totalCount.toLocaleString('pt-BR')} assinaturas previstas`}
           icon={<Sparkles className="h-4 w-4" />}
+        />
+        <KpiCard
+          title="Taxa de chargeback"
+          value={formatPercent(metrics.chargebackRate, 2)}
+          hint={`${metrics.chargebacksInRange.toLocaleString('pt-BR')} chargebacks de pagas`}
+          icon={<ShieldAlert className="h-4 w-4" />}
         />
       </div>
 

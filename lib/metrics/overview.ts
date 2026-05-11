@@ -17,6 +17,8 @@ export type OverviewMetrics = {
   avgTicketInRange: number;
   arpu: number;
   canceledInRange: number;
+  chargebacksInRange: number;
+  chargebackRate: number | null;
 };
 
 function sumPaid(rows: Array<{ paid_amount: number | null }> | null): number {
@@ -46,6 +48,8 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
     failedCount,
     canceledInRangeRes,
     activeAtStart,
+    chargebacksRes,
+    paidChargesCountRes,
   ] = await Promise.all([
     supabase.from('petloo_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('petloo_subscriptions').select('id', { count: 'exact', head: true }).eq('status', 'canceled'),
@@ -92,6 +96,20 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
       .select('id', { count: 'exact', head: true })
       .lte('pagarme_created_at', sinceISO)
       .or(`canceled_at.is.null,canceled_at.gt.${sinceISO}`),
+    supabase
+      .from('petloo_charges')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'chargedback')
+      .not('invoice_pagarme_id', 'is', null)
+      .gte('paid_at', sinceISO)
+      .lte('paid_at', untilISO),
+    supabase
+      .from('petloo_charges')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'paid')
+      .not('invoice_pagarme_id', 'is', null)
+      .gte('paid_at', sinceISO)
+      .lte('paid_at', untilISO),
   ]);
 
   logError('activeSubs', activeSubs.error);
@@ -104,6 +122,8 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
   logError('failedCount', failedCount.error);
   logError('canceledInRange', canceledInRangeRes.error);
   logError('activeAtStart', activeAtStart.error);
+  logError('chargebacks', chargebacksRes.error);
+  logError('paidChargesCount', paidChargesCountRes.error);
 
   const revenue = sumPaid(revenueRows.data as Array<{ paid_amount: number | null }> | null);
   const revenuePrev = sumPaid(revenuePrevRows.data as Array<{ paid_amount: number | null }> | null);
@@ -112,6 +132,9 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
   const failed = failedCount.count ?? 0;
   const canceledRng = canceledInRangeRes.count ?? 0;
   const activeStartCount = activeAtStart.count ?? 0;
+  const chargebacks = chargebacksRes.count ?? 0;
+  const paidCharges = paidChargesCountRes.count ?? 0;
+  const acceptedTransactions = paidCharges + chargebacks;
 
   return {
     activeSubscriptions: activeCount,
@@ -128,6 +151,8 @@ export async function getOverviewMetrics(range: DateRange): Promise<OverviewMetr
     avgTicketInRange: paid > 0 ? revenue / paid : 0,
     arpu: activeCount > 0 ? revenue / activeCount : 0,
     canceledInRange: canceledRng,
+    chargebacksInRange: chargebacks,
+    chargebackRate: acceptedTransactions > 0 ? chargebacks / acceptedTransactions : null,
   };
 }
 
