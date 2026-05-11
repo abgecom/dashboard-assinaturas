@@ -13,6 +13,7 @@ export type InvoiceRow = {
   customer_name: string | null;
   customer_email: string | null;
   subscription_id: string | null;
+  plan_name: string | null;
 };
 
 export async function listInvoices(limit = 1000): Promise<InvoiceRow[]> {
@@ -23,7 +24,8 @@ export async function listInvoices(limit = 1000): Promise<InvoiceRow[]> {
       `
       id, pagarme_id, code, status, amount, payment_method, billing_at,
       pagarme_created_at, customer_id, subscription_id,
-      petloo_customers ( name, email )
+      petloo_customers ( name, email ),
+      petloo_subscriptions ( petloo_plans ( name ) )
     `,
     )
     .order('billing_at', { ascending: false, nullsFirst: false })
@@ -42,5 +44,6 @@ export async function listInvoices(limit = 1000): Promise<InvoiceRow[]> {
     customer_name: i.petloo_customers?.name ?? null,
     customer_email: i.petloo_customers?.email ?? null,
     subscription_id: i.subscription_id,
+    plan_name: i.petloo_subscriptions?.petloo_plans?.name ?? null,
   }));
 }
