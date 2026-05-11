@@ -101,12 +101,13 @@ export async function pagarmeRequest<T>(
 
 /**
  * Itera todas as páginas de um endpoint de listagem da Pagar.me.
- * Pagar.me v5 usa paginação por `page` (1-based) e `size` (max 100).
+ * Pagar.me v5 usa paginação por `page` (1-based) e `size` (max 30 por endpoint).
+ * Pedimos size=30 (o cap real) e seguimos enquanto `paging.next` indicar mais páginas.
  */
 export async function* paginate<T>(
   path: string,
   query?: RequestOptions['query'],
-  pageSize = 100,
+  pageSize = 30,
 ): AsyncGenerator<T> {
   let page = 1;
   while (true) {
@@ -114,7 +115,8 @@ export async function* paginate<T>(
       query: { ...query, page, size: pageSize },
     });
     for (const item of response.data) yield item;
-    if (!response.paging?.next || response.data.length < pageSize) break;
+    if (response.data.length === 0) break;
+    if (!response.paging?.next) break;
     page++;
   }
 }
