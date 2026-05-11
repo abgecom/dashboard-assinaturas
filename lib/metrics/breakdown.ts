@@ -116,17 +116,37 @@ function planPriceFromItems(items: unknown): number {
 export async function getForecast(range: DateRange): Promise<Forecast> {
   const supabase = createServiceClient();
 
-  const { data: subs, error: subsErr } = await supabase
-    .from('petloo_subscriptions')
-    .select('id, plan_id, status, petloo_plans(name)')
-    .neq('status', 'canceled')
-    .gte('next_billing_at', range.from.toISOString())
-    .lte('next_billing_at', range.to.toISOString())
-    .limit(5000);
+  const sinceISO = range.from.toISOString();
+  const untilISO = range.to.toISOString();
 
-  if (subsErr) console.error('[forecast] subs:', subsErr);
+  // Pagar.me usa 2 cenários distintos:
+  //   - active: tem next_billing_at preenchido (ciclos seguintes)
+  //   - future/trialing: next_billing_at é NULL, usa start_at (1ª cobrança após trial)
+  const [activeRes, futureRes] = await Promise.all([
+    supabase
+      .from('petloo_subscriptions')
+      .select('id, plan_id, status, petloo_plans(name)')
+      .eq('status', 'active')
+      .gte('next_billing_at', sinceISO)
+      .lte('next_billing_at', untilISO)
+      .limit(5000),
+    supabase
+      .from('petloo_subscriptions')
+      .select('id, plan_id, status, petloo_plans(name)')
+      .in('status', ['future', 'trialing'])
+      .gte('start_at', sinceISO)
+      .lte('start_at', untilISO)
+      .limit(5000),
+  ]);
 
-  const subList = (subs ?? []) as any[];
+  if (activeRes.error) console.error('[forecast] active subs:', activeRes.error);
+  if (futureRes.error) console.error('[forecast] future subs:', futureRes.error);
+
+  // Dedupe por id (mesma sub não deveria estar nos dois, mas segurança)
+  const subsById = new Map<string, any>();
+  for (const s of (activeRes.data ?? []) as any[]) subsById.set(s.id, s);
+  for (const s of (futureRes.data ?? []) as any[]) subsById.set(s.id, s);
+  const subList = Array.from(subsById.values());
   if (subList.length === 0) {
     return { rows: [], totalAmount: 0, totalCount: 0, unknownValueCount: 0 };
   }
