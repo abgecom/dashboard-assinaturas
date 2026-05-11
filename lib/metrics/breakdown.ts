@@ -17,7 +17,7 @@ function planNameFromSub(sub: any): string {
 }
 
 function planNameFromInvoice(inv: any): string {
-  const subRel = unwrap<{ petloo_plans?: unknown }>(inv?.petloo_subscriptions);
+  const subRel = unwrap<any>(inv?.petloo_subscriptions);
   const planRel = unwrap<{ name?: string | null }>(subRel?.petloo_plans);
   return planRel?.name ?? 'Sem plano';
 }
